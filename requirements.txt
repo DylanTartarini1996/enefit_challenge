@@ -1,0 +1,10 @@
+ipykernel
+kaggle
+matplotlib
+mlflow==2.8.0
+numpy
+pandas
+pmdarima
+seaborn
+statsmodels
+xgboost
