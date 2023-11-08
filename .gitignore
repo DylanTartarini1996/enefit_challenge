@@ -160,5 +160,4 @@ cython_debug/
 #.idea/
 
 /predict-energy-behavior-of-prosumers/
-/mlruns/
 .DS_Store
