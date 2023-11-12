@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd 
 
 from pathlib import Path
-data_path = Path('../input/')
+data_path = Path('../../input/')
 
 
 def load_enefit_training_data() -> pd.DataFrame:
