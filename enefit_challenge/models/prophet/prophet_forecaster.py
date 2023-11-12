@@ -42,7 +42,7 @@ class ProphetForecaster(Forecaster):
             the target variable and a column `ds` with the dates, so we preprocess
             the training df before fitting it. 
             
-            Args
+            params:
             ---------
             `train_df`: `pd.DataFrame`
                 the training data for the model.
@@ -56,6 +56,8 @@ class ProphetForecaster(Forecaster):
                 it's the frequency of predictions performed during training
             `initial`: `str`
                 the initial training set
+            `experiment_name`: `str`
+                the name of the experiment used to store runs in MLflow
             `artifact_path`: `str`
                 the path pointing to the MLflow artifact
             `metrics`: `list`:
@@ -63,7 +65,7 @@ class ProphetForecaster(Forecaster):
             `time_series_params`: `dict`
                 dictionary of parameters that can be used to configure the Prophet model.
             
-            Returns
+            returns:
             --------
             `model_uri`: `str`
                 the model uri to load the prophet model directly from MLflow
@@ -137,7 +139,7 @@ class ProphetForecaster(Forecaster):
         and also forecast into the future, specifying how many steps ahead with 
         the param `n_steps` (out-of-sample forecast).
 
-        Args:
+        params:
         ----------
         n_steps: int
             the number of steps (1 step is one skip in the frequency of the training set)

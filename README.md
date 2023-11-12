@@ -55,3 +55,11 @@ Folder structure:
     ├── requirements.txt
     ├── setup.py -> enefit_challenge package setup installation
 ```
+
+## Tracking with MLflow
+Once you launch an experiment (i.e. training a model) you can run 
+```
+    mlflow server
+```
+to visualize the mlflow UI and see all the experiment runs for all models, their metrics and so on.  
+You can also use the UI to register the best-performing models.
