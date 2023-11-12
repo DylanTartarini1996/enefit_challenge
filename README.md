@@ -21,3 +21,37 @@ After having obtained your [Kaggle API key](https://github.com/Kaggle/kaggle-api
 ```
     kaggle competitions download -c predict-energy-behavior-of-prosumers
 ```
+
+## Install Package for the competition
+Code, utilities and other classes (like model classes) can be properly written and integrated in the `enefit_challenge` python package created here.  
+To actually install the python package, you should be able to clone this repository and then, on your active environment, run 
+```
+    python3 -m pip install --upgrade build
+    python setup.py install
+```
+You should now be able to import modules and methods, for example
+```
+    from enefit_challenge.utils.dataset import load_enefit_training_data
+```  
+
+If you want to ***modify the package***, add or remove code from it, cd into your folder and 
+```
+    python3 -m pip install --upgrade build
+```
+
+## Commiting Notebooks
+To commit a notebook, use the various `notebooks/` subfolders, possibly following naming conventions: 
+name of notebook: `{your_initials}_{number}_{notebook_title}.ipynb`
+
+Folder structure:
+```
+    .
+    ├── enefit -> to be downloaded from kaggle
+    ├── enefit_challenge -> python package for the challenge
+    ├── input -> data from the challenge
+    ├── notebooks -> notebook folder
+    ├── .gitignore
+    ├── README.md
+    ├── requirements.txt
+    ├── setup.py -> enefit_challenge package setup installation
+```

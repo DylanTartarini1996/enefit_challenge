@@ -1,3 +1,4 @@
+catboost
 ipykernel
 kaggle
 matplotlib
@@ -5,6 +6,8 @@ mlflow==2.8.0
 numpy
 pandas
 pmdarima
+prophet
 seaborn
+shap
 statsmodels
 xgboost
