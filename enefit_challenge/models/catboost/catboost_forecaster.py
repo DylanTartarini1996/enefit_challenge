@@ -12,17 +12,20 @@ import optuna
 from optuna.integration.mlflow import MLflowCallback
 import joblib
 
-from typing import Optional, Dict, Tuple
-from pathlib import Path
-from enefit_challenge.utils.dataset import load_enefit_training_data
-
+from typing import Optional, Dict, Tuple, Literal
 from enefit_challenge.models.forecaster import Forecaster
 import warnings
-
 warnings.filterwarnings("ignore")
 
 
+TRACKING_URI = "http://127.0.0.1:5000/" # local tracking URI -> launch mlflow before training 
+
 class CatBoostForecaster(Forecaster):
+    """
+        Implementation of a Forecaster using `CatBoostRegressor` as base model, 
+        `optuna` for hyperparameters optimization and `mlflow` as backend to track experiments
+        and register best-in-class model for time series prediction.
+    """
     def __init__(self)-> None:
         pass
 
@@ -123,7 +126,7 @@ class CatBoostForecaster(Forecaster):
         artifact_path: str="catboost_model",
         params: Optional[Dict]=None,
         metrics: list=["MAE"]
-    ) -> Dict:
+    ) -> None:
         """ 
         Takes an instance of `CatBoostRegressor` model and tracks the hyperparameter tuning
         experiment on training set using `mlflow` and `optuna`.  
@@ -215,15 +218,63 @@ class CatBoostForecaster(Forecaster):
     def forecast(
         self, 
         input_data: pd.DataFrame,
+        use_best_from_run: bool=True,
+        use_env_model: Literal["Staging", "Production", None]=None,
+        use_version: int=None
         ) -> pd.DataFrame:
         """ 
-        Fetches the latest version of the model from the mlflow backend and uses it
-        to perform prediction on new input data.
+        Fetches a version of the model from the mlflow backend and uses it
+        to perform prediction on new input data.  
+        What version is used depends on params settings, 
+        defaults to using the best version from the last experiment run (currently not implemented). 
+        -------     
+        params:
+        -------
+        `input_data`: `pd.DataFrame`
+            the input data for prediction,
+              must have the same schema as what's in the model's signature.
+        `use_best_from_run`: `bool=True`      
+            use the best model from the current series of iterations, defaults to True
+        `use_env_model`: `Literal["Staging", "Production", None]=None`
+            use model from a given mlflow environment, defaults to None.  
+            Said model might come from past iterations, depending on what you decide in the UI
+        `use_version`: `int=None`
+            use a previously trained version of the model. 
+            Said version must have been registered from a previous iteration,  
+            either by the UI or with mlflow's API
         """
-        model = mlflow.pyfunc.load_model(
-            model_uri=f"models:/{self.model_name}/{self.result.version}"
-        )
-        y_pred = model.predict(input_data)
+        if use_best_from_run:
+            # not implemented now bc of callback bug
+            use_prod_model=None
+            use_version=None
+        
+            # model = mlflow.pyfunc.load_model(
+            #     model_uri=f"models:/{self.model_name}/{self.result.version}"
+            # )
+            # y_pred = model.predict(input_data)
+            # return y_pred
+        
+        if use_env_model is not None:
+            use_version = None
 
-        return y_pred
+            model = mlflow.pyfunc.load_model(
+                # get registered model in given environment
+                model_uri=f"models:/{self.model_name}/{use_env_model}"
+            )
+            y_pred = model.predict(input_data)
+            return y_pred
+
+        if use_version is not None:
+            # get specific registered version of model
+            model = mlflow.pyfunc.load_model(
+                model_uri=f"models:/{self.model_name}/{use_version}"
+            )
+            y_pred = model.predict(input_data)
+            return y_pred
+
+        
+        if (not use_best_from_run) & (use_env_model is None) & (use_version is None):
+            return ValueError(
+                    "You must specify which kind of CatBoostForecaster you intend to use for prediction"
+                    )
         
