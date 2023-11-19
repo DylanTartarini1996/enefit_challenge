@@ -1,12 +1,12 @@
-import numpy as np
-import pandas as pd
+import numpy as np 
+import pandas as pd 
 import mlflow
-import mlflow.catboost
-from catboost import CatBoostRegressor
+import mlflow.lightgbm
 from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
+from lightgbm import LGBMRegressor
 
 import optuna
 from optuna.integration.mlflow import MLflowCallback
@@ -14,16 +14,17 @@ import joblib
 
 from typing import Optional, Dict, Tuple, Literal
 from enefit_challenge.models.forecaster import Forecaster
-import warnings
-warnings.filterwarnings("ignore")
+from enefit_challenge.utils.dataset import load_enefit_training_data
 
+import warnings
+warnings.filterwarnings('ignore')
 
 TRACKING_URI = "http://127.0.0.1:5000/" # local tracking URI -> launch mlflow before training 
 
 
-class CatBoostForecaster(Forecaster):
+class LightGBMForecaster(Forecaster):
     """
-        Implementation of a Forecaster using `CatBoostRegressor` as base model, 
+        Implementation of a Forecaster using `LGBMRegressor` as base model, 
         `optuna` for hyperparameters optimization and `mlflow` as backend to track experiments
         and register best-in-class model for time series prediction.
     """
@@ -33,13 +34,12 @@ class CatBoostForecaster(Forecaster):
 
     def fit_model(
         self,  
-        X: pd.DataFrame,
-        y: pd.Series,
-        categorical_features: list=[],
+        X:pd.DataFrame,
+        y:pd.Series,
         params:Optional[Dict]=None,
-    ) -> CatBoostRegressor:
+    ) -> LGBMRegressor:
         """
-        Trains a `CatBoostRegressor` with a L1 loss
+        Trains a `LGBMRegressor`
 
         -------     
         params:
@@ -48,25 +48,16 @@ class CatBoostForecaster(Forecaster):
             Features to use for fitting
         `y`:`pd.Series`
             Target variable
-        `categorical_features`: `list`
-            list of categorical features in the dataset
         `params`: `Optional[Dict]`
             optional dictionary of parameters to use
         -------     
         returns:
         -------
-        fitted `CatBoostRegressor`
-
+        fitted `LGBMRegressor`
         """
-        model = CatBoostRegressor(
+        model = LGBMRegressor(
             n_estimators=100, 
-            objective='MAE',
-            thread_count=1,
-            bootstrap_type =  "Bernoulli",
-            sampling_frequency= 'PerTree',
-            verbose=0,
-            cat_features=categorical_features,
-            leaf_estimation_iterations=1
+            objective='regression',
         )
         if params:
             model.set_params(**params)
@@ -82,27 +73,31 @@ class CatBoostForecaster(Forecaster):
         y: pd.Series, 
         year_month_train, 
         year_month_test,
-        categorical_features: list=[],
-        experiment_name: str="catboost",
-        artifact_path: str="catboost_model",
+        experiment_name: str="lightgbm",
+        artifact_path: str="lightgbm_model",
         metrics: list=["mae"]
     ) -> float:
         """
-        Used for cross validation on different time splits
+        Used for cross validation on different time splits; 
+        also in charge of logging every experiment run / study trial into the backend.
         """
         
         first_dates_month = pd.to_datetime(X[['year', 'month']].assign(day=1))
         train_index = first_dates_month.isin(year_month_train)
         test_index = first_dates_month.isin(year_month_test)
-        X_train = X[train_index];X_test = X[test_index]
-        y_train = y[train_index]; y_test = y[test_index]
+
+        X_train = X[train_index]
+        X_test = X[test_index]
+        y_train = y[train_index]
+        y_test = y[test_index]
+
         # fit model on training data
         model = self.fit_model(
             X_train, 
             y_train, 
-            categorical_features,
             params
         )
+        
         # generate predictions
         y_test_pred = model.predict(X_test)
         self.signature = infer_signature(X_train, y_test_pred)
@@ -110,7 +105,7 @@ class CatBoostForecaster(Forecaster):
         mape = mean_absolute_percentage_error(y_test, y_test_pred)
         rmse = np.sqrt(mean_squared_error(y_test, y_test_pred))
 
-        mlflow.catboost.log_model(
+        mlflow.lightgbm.log_model(
             model, 
             artifact_path=artifact_path,
             signature=self.signature
@@ -126,15 +121,14 @@ class CatBoostForecaster(Forecaster):
         model_name: str,
         exclude_cols: list=[],
         categorical_features: list=[],
-        experiment_name: str="catboost",
-        artifact_path: str="catboost_model",
-        params: Optional[Dict]=None,
-        metrics: list=["MAE"]
+        experiment_name: str="lightgbm",
+        artifact_path: str="lightgbm_model",
+        params: Optional[Dict]=None
     ) -> None:
         """ 
-        Takes an instance of `CatBoostRegressor` model and tracks the hyperparameter tuning
+        Takes an instance of `LGBMRegressor` model and tracks the hyperparameter tuning
         experiment on training set using `mlflow` and `optuna`.  
-        Registers the best version of the model according to a specified metric
+        Registers the best version of the model according to a specified metric (to be implemented).
         
         -------     
         params:
@@ -158,29 +152,34 @@ class CatBoostForecaster(Forecaster):
             optional dictionary of parameters to use
         """
         self.model_name = model_name
+
+        if len(categorical_features) > 0: 
+           train_df = pd.get_dummies(train_df, columns=categorical_features)
+
         X = train_df.drop([target_col] + exclude_cols, axis=1)
         y = train_df[target_col]
         # unique year-month combinations -> to be used in cross-validation
         timesteps = np.sort(np.array(
             pd.to_datetime(X[['year', 'month']].assign(day=1)).unique().tolist()
         ))
-
+        
         # define mlflow callback Handler for optuna 
         mlflc = MLflowCallback(
-            metric_name="MAE",
+            metric_name=["MAE"]
         )
     
         @mlflc.track_in_mlflow() # decorator to allow mlflow logging
         def objective(trial):
             params = {
-                'eval_metric': 'mae',
-                'n_estimators': trial.suggest_int('n_estimators', 50, 200),
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.95,log=True),
-                'depth': trial.suggest_int('depth', 3, 10, log=True),
-                'l2_leaf_reg': trial.suggest_float('l2_leaf_reg',1e-8,100,log=True),
-                'model_size_reg': trial.suggest_float('model_size_reg',1e-8,100,log=True),
-                'colsample_bylevel': trial.suggest_float("colsample_bylevel", 0.1, 1),
-                'subsample': trial.suggest_float("subsample", 0.5, 1)
+                'n_estimators': trial.suggest_int('n_estimators', 50, 200, log=True),
+                'boosting_type': trial.suggest_categorical("boosting_type", ["gbdt", "dart", "rf"]),
+                'learning_rate': trial.suggest_float('eta', 0.01, 0.95,log=True),
+                'max_depth': trial.suggest_int('max_depth', 1, 10, log=True),
+                'min_child_weight': trial.suggest_float('min_child_weight', 0.001, 10, log=True),
+                'colsample_bytree': trial.suggest_float("colsample_bytree", 0.1, 1, log=True),
+                'subsample': trial.suggest_float("subsample", 0.5, 1, log=True),
+                'reg_alpha': trial.suggest_float('lambda', 1e-3, 10.0, log=True), #L1
+                'reg_lambda': trial.suggest_float('alpha', 1e-3, 10.0, log=True) #L2
             }
             cv = TimeSeriesSplit(n_splits=3) # cross validation
             cv_mae = [None]*3
@@ -192,8 +191,7 @@ class CatBoostForecaster(Forecaster):
                     X, 
                     y, 
                     timesteps[train_index], 
-                    timesteps[test_index],
-                    categorical_features
+                    timesteps[test_index]
                 )
             trial.set_user_attr('split_mae', cv_mae)
             trial.set_user_attr('split_mape', cv_mape)
@@ -220,9 +218,9 @@ class CatBoostForecaster(Forecaster):
             study_name=experiment_name
         )
 
-        self.study.optimize(objective, n_trials=50, timeout= 7200, callbacks=[mlflc]) 
+        self.study.optimize(objective, n_trials=100, timeout= 7200, callbacks=[mlflc]) 
         
-        # search for the best run at the end of the experiment
+        # # search for the best run at the end of the experiment # not implemented now bc of callback bug
         # best_run = mlflow.search_runs(max_results=1,order_by=["metrics.MAE"]).run_id
         # # register new model version in mlflow
         # self.result = mlflow.register_model(
@@ -290,6 +288,5 @@ class CatBoostForecaster(Forecaster):
         
         if (not use_best_from_run) & (use_env_model is None) & (use_version is None):
             return ValueError(
-                    "You must specify which kind of CatBoostForecaster you intend to use for prediction"
-                    )
-        
+                    "You must specify which kind of LightGBMForecaster you intend to use for prediction"
+            )

@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="enefit_challenge", # Replace with your username
-    version="0.1.1",
+    version="0.1.2",
     author="Dylan Tartarini",
     author_email="<tartarinidylan@gmail.com>",
     description="<Package developed while partecipating to Enefit Challenge>",
@@ -14,6 +14,7 @@ setuptools.setup(
     packages=setuptools.find_packages(),
     install_requires=[
         "catboost", 
+        "lightgbm",
         "matplotlib",
         "mlflow",
         "numpy",

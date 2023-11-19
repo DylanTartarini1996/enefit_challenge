@@ -1,6 +1,7 @@
 catboost
 ipykernel
 kaggle
+lightgbm
 matplotlib
 mlflow==2.8.0
 numpy
