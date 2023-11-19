@@ -5,7 +5,7 @@ import mlflow.xgboost
 from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
 from xgboost import XGBRegressor
 
 import optuna
@@ -24,7 +24,7 @@ TRACKING_URI = "http://127.0.0.1:5000/" # local tracking URI -> launch mlflow be
 
 class XGBoostForecaster(Forecaster):
     """
-        Implementaiton of a Forecaster using `XGBRegressor` as base model, 
+        Implementation of a Forecaster using `XGBRegressor` as base model, 
         `optuna` for hyperparameters optimization and `mlflow` as backend to track experiments
         and register best-in-class model for time series prediction.
     """
@@ -57,7 +57,8 @@ class XGBoostForecaster(Forecaster):
         """
         model = XGBRegressor(
             n_estimators=100, 
-            objective='reg:squarederror'
+            objective='reg:squarederror',
+            eval_metric='mae'
         )
         if params:
             model.set_params(**params)
@@ -97,10 +98,13 @@ class XGBoostForecaster(Forecaster):
             y_train, 
             params
         )
+        
         # generate predictions
         y_test_pred = model.predict(X_test)
         self.signature = infer_signature(X_train, y_test_pred)
         mae = mean_absolute_error(y_test, y_test_pred)
+        mape = mean_absolute_percentage_error(y_test, y_test_pred)
+        rmse = np.sqrt(mean_squared_error(y_test, y_test_pred))
 
         mlflow.xgboost.log_model(
             model, 
@@ -109,7 +113,7 @@ class XGBoostForecaster(Forecaster):
         )
         mlflow.log_params(params)
 
-        return mae
+        return mae, mape, rmse
 
     def train_model(
         self, 
@@ -117,10 +121,10 @@ class XGBoostForecaster(Forecaster):
         target_col: str,
         model_name: str,
         exclude_cols: list=[],
+        categorical_features: list=[],
         experiment_name: str="xgboost",
         artifact_path: str="xgboost_model",
-        params: Optional[Dict]=None,
-        metrics: list=["MAE"]
+        params: Optional[Dict]=None
     ) -> None:
         """ 
         Takes an instance of `XGBRegressor` model and tracks the hyperparameter tuning
@@ -141,29 +145,34 @@ class XGBoostForecaster(Forecaster):
             the time-series target column
         `exclude_cols`: `list`  
             columns in dataset that should not be used
+        `categorical_features`: `list`
+            list of categorical features in the dataset
         `artifact_path`: `str`
             the path pointing to the mlflow artifact
-        `metrics`: `list`
-            list of the metrics to track in the mlflow experiment run.
         `params`: `Optional[Dict]`
             optional dictionary of parameters to use
         """
         self.model_name = model_name
+
+        if len(categorical_features) > 0: 
+           train_df = pd.get_dummies(train_df, columns=categorical_features)
+
         X = train_df.drop([target_col] + exclude_cols, axis=1)
         y = train_df[target_col]
         # unique year-month combinations -> to be used in cross-validation
         timesteps = np.sort(np.array(
             pd.to_datetime(X[['year', 'month']].assign(day=1)).unique().tolist()
         ))
-
+        
         # define mlflow callback Handler for optuna 
         mlflc = MLflowCallback(
-            metric_name="MAE",
+            metric_name=["MAE"]
         )
     
         @mlflc.track_in_mlflow() # decorator to allow mlflow logging
         def objective(trial):
             params = {
+                'eval_metric': 'mae',
                 'n_estimators': trial.suggest_int('n_estimators', 50, 200, log=True),
                 'eta': trial.suggest_float('eta', 0.01, 0.95,log=True),
                 'max_depth': trial.suggest_int('max_depth', 1, 10, log=True),
@@ -177,8 +186,10 @@ class XGBoostForecaster(Forecaster):
             }
             cv = TimeSeriesSplit(n_splits=3) # cross validation
             cv_mae = [None]*3
+            cv_mape = [None]*3
+            cv_rmse = [None]*3
             for i, (train_index, test_index) in enumerate(cv.split(timesteps)):
-                cv_mae[i] = self.fit_and_test_fold(
+                cv_mae[i], cv_mape[i], cv_rmse[i] = self.fit_and_test_fold(
                     params,
                     X, 
                     y, 
@@ -186,12 +197,22 @@ class XGBoostForecaster(Forecaster):
                     timesteps[test_index]
                 )
             trial.set_user_attr('split_mae', cv_mae)
-            return np.mean(cv_mae)
+            trial.set_user_attr('split_mape', cv_mape)
+            trial.set_user_attr('split_rmse', cv_rmse)
+
+            mlflow.log_metrics(
+                {
+                    "MAE":np.mean(cv_mae),
+                    "MAPE":np.mean(cv_mape),
+                    "RMSE":np.mean(cv_rmse) 
+                }
+            )
+            return np.mean(cv_mae) 
 
         
         sampler = optuna.samplers.TPESampler(
             n_startup_trials=10, 
-            seed=42
+            seed=0
         )
 
         self.study = optuna.create_study(
@@ -200,7 +221,7 @@ class XGBoostForecaster(Forecaster):
             study_name=experiment_name
         )
 
-        self.study.optimize(objective, n_trials=100, timeout= 7200, callbacks=[mlflc]) 
+        self.study.optimize(objective, n_trials=50, timeout= 7200, callbacks=[mlflc]) 
         
         # # search for the best run at the end of the experiment # not implemented now bc of callback bug
         # best_run = mlflow.search_runs(max_results=1,order_by=["metrics.MAE"]).run_id
@@ -271,5 +292,4 @@ class XGBoostForecaster(Forecaster):
         if (not use_best_from_run) & (use_env_model is None) & (use_version is None):
             return ValueError(
                     "You must specify which kind of XGBoostForecaster you intend to use for prediction"
-                    )
-        
+            )
