@@ -6,7 +6,7 @@ from catboost import CatBoostRegressor
 from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import mean_absolute_error
+from sklearn.metrics import mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
 
 import optuna
 from optuna.integration.mlflow import MLflowCallback
@@ -20,6 +20,7 @@ warnings.filterwarnings("ignore")
 
 TRACKING_URI = "http://127.0.0.1:5000/" # local tracking URI -> launch mlflow before training 
 
+
 class CatBoostForecaster(Forecaster):
     """
         Implementation of a Forecaster using `CatBoostRegressor` as base model, 
@@ -27,6 +28,7 @@ class CatBoostForecaster(Forecaster):
         and register best-in-class model for time series prediction.
     """
     def __init__(self)-> None:
+        self.tracking_uri = mlflow.set_tracking_uri(TRACKING_URI)
         pass
 
     def fit_model(
@@ -105,6 +107,8 @@ class CatBoostForecaster(Forecaster):
         y_test_pred = model.predict(X_test)
         self.signature = infer_signature(X_train, y_test_pred)
         mae = mean_absolute_error(y_test, y_test_pred)
+        mape = mean_absolute_percentage_error(y_test, y_test_pred)
+        rmse = np.sqrt(mean_squared_error(y_test, y_test_pred))
 
         mlflow.catboost.log_model(
             model, 
@@ -113,7 +117,7 @@ class CatBoostForecaster(Forecaster):
         )
         mlflow.log_params(params)
 
-        return mae
+        return mae, mape, rmse
 
     def train_model(
         self, 
@@ -150,8 +154,6 @@ class CatBoostForecaster(Forecaster):
             list of categorical features in the dataset
         `artifact_path`: `str`
             the path pointing to the mlflow artifact
-        `metrics`: `list`
-            list of the metrics to track in the mlflow experiment run.
         `params`: `Optional[Dict]`
             optional dictionary of parameters to use
         """
@@ -171,6 +173,7 @@ class CatBoostForecaster(Forecaster):
         @mlflc.track_in_mlflow() # decorator to allow mlflow logging
         def objective(trial):
             params = {
+                'eval_metric': 'mae',
                 'n_estimators': trial.suggest_int('n_estimators', 50, 200),
                 'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.95,log=True),
                 'depth': trial.suggest_int('depth', 3, 10, log=True),
@@ -181,8 +184,10 @@ class CatBoostForecaster(Forecaster):
             }
             cv = TimeSeriesSplit(n_splits=3) # cross validation
             cv_mae = [None]*3
+            cv_mape = [None]*3
+            cv_rmse = [None]*3
             for i, (train_index, test_index) in enumerate(cv.split(timesteps)):
-                cv_mae[i] = self.fit_and_test_fold(
+                cv_mae[i], cv_mape[i], cv_rmse[i] = self.fit_and_test_fold(
                     params,
                     X, 
                     y, 
@@ -191,12 +196,22 @@ class CatBoostForecaster(Forecaster):
                     categorical_features
                 )
             trial.set_user_attr('split_mae', cv_mae)
-            return np.mean(cv_mae)
+            trial.set_user_attr('split_mape', cv_mape)
+            trial.set_user_attr('split_rmse', cv_rmse)
+
+            mlflow.log_metrics(
+                {
+                    "MAE":np.mean(cv_mae),
+                    "MAPE":np.mean(cv_mape),
+                    "RMSE":np.mean(cv_rmse) 
+                }
+            )
+            return np.mean(cv_mae) 
 
         
         sampler = optuna.samplers.TPESampler(
             n_startup_trials=10, 
-            seed=42
+            seed=0
         )
 
         self.study = optuna.create_study(
@@ -205,7 +220,7 @@ class CatBoostForecaster(Forecaster):
             study_name=experiment_name
         )
 
-        self.study.optimize(objective, n_trials=2, timeout= 3600, callbacks=[mlflc]) 
+        self.study.optimize(objective, n_trials=50, timeout= 7200, callbacks=[mlflc]) 
         
         # search for the best run at the end of the experiment
         # best_run = mlflow.search_runs(max_results=1,order_by=["metrics.MAE"]).run_id
