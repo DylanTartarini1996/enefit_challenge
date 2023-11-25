@@ -34,8 +34,10 @@ You should now be able to import modules and methods, for example
     from enefit_challenge.utils.dataset import load_enefit_training_data
 ```  
 
-If you want to ***modify the package***, add or remove code from it, cd into your folder and 
+If you want to ***modify the package***, add or remove code from it, cd into your folder and, 
+after removal from environment, run 
 ```
+    python setup.py sdist
     python3 -m pip install --upgrade build
 ```
 
