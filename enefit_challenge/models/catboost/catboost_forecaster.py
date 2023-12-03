@@ -2,12 +2,12 @@ import numpy as np
 import pandas as pd
 import mlflow
 import mlflow.catboost
-import mlflow.shap
 from catboost import CatBoostRegressor
 from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.metrics import mean_absolute_error, mean_squared_error, mean_absolute_percentage_error
+from sktime.performance_metrics.forecasting import (MeanAbsoluteScaledError, 
+    MeanAbsolutePercentageError, MeanAbsoluteError, MeanSquaredError)
 
 import optuna
 from optuna.integration.mlflow import MLflowCallback
@@ -108,9 +108,16 @@ class CatBoostForecaster(Forecaster):
         # generate predictions
         y_test_pred = model.predict(X_test)
         self.signature = infer_signature(X_train, y_test_pred)
-        mae = mean_absolute_error(y_test, y_test_pred)
-        mape = mean_absolute_percentage_error(y_test, y_test_pred)
-        rmse = np.sqrt(mean_squared_error(y_test, y_test_pred))
+        MAE = MeanAbsoluteError()
+        mae = MAE(y_test, y_test_pred)
+        MASE = MeanAbsoluteScaledError()
+        mase = MASE(y_test, y_test_pred, y_train=y_train)
+        MAPE = MeanAbsolutePercentageError()
+        mape = MAPE(y_test, y_test_pred)
+        MSE = MeanSquaredError()
+        mse = MSE(y_test, y_test_pred)
+        RMSE = MeanSquaredError(square_root=True)
+        rmse = RMSE(y_test, y_test_pred)
 
         mlflow.catboost.log_model(
             model, 
@@ -119,7 +126,7 @@ class CatBoostForecaster(Forecaster):
         )
         mlflow.log_params(params)
 
-        return mae, mape, rmse
+        return mae, mase, mse, rmse, mape
 
     def train_model(
         self, 
@@ -186,26 +193,31 @@ class CatBoostForecaster(Forecaster):
             }
             cv = TimeSeriesSplit(n_splits=3) # cross validation
             cv_mae = [None]*3
-            cv_mape = [None]*3
+            cv_mase = [None]*3
+            cv_mse = [None]*3
             cv_rmse = [None]*3
+            cv_mape = [None]*3
             for i, (train_index, test_index) in enumerate(cv.split(timesteps)):
-                cv_mae[i], cv_mape[i], cv_rmse[i] = self.fit_and_test_fold(
+                cv_mae[i], cv_mase[i], cv_mse[i], cv_rmse[i], cv_mape[i] = self.fit_and_test_fold(
                     params,
                     X, 
                     y, 
                     timesteps[train_index], 
-                    timesteps[test_index],
-                    categorical_features
+                    timesteps[test_index]
                 )
             trial.set_user_attr('split_mae', cv_mae)
-            trial.set_user_attr('split_mape', cv_mape)
+            trial.set_user_attr('split_mase', cv_mase)
+            trial.set_user_attr('split_mse', cv_mse)
             trial.set_user_attr('split_rmse', cv_rmse)
+            trial.set_user_attr('split_mape', cv_mape)
 
             mlflow.log_metrics(
                 {
                     "MAE":np.mean(cv_mae),
-                    "MAPE":np.mean(cv_mape),
-                    "RMSE":np.mean(cv_rmse) 
+                    "MASE": np.mean(cv_mase),
+                    "MSE": np.mean(cv_mse),
+                    "RMSE":np.mean(cv_rmse),
+                    "MAPE":np.mean(cv_mape)
                 }
             )
             return np.mean(cv_mae) 
