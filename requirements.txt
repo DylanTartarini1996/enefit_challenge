@@ -4,12 +4,13 @@ geopy
 kaggle
 lightgbm
 matplotlib
-mlflow==2.8.0
+mlflow
 numpy
 pandas
 pmdarima
 prophet
 seaborn
 shap
+sktime
 statsmodels
 xgboost
