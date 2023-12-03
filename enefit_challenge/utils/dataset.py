@@ -4,6 +4,21 @@ import pandas as pd
 from pathlib import Path
 data_path = Path('../../input/')
 
+# dictionary for feature aggregation over county-datetime
+weather_agg = {'temperature' : ['min', 'mean', 'max', 'std'],
+            'dewpoint' : ['min', 'mean', 'max', 'std'],
+            'cloudcover_high' : ['min', 'mean', 'max', 'std'],
+            'cloudcover_low' : ['min', 'mean', 'max', 'std'],
+            'cloudcover_mid' : ['min', 'mean', 'max', 'std'],
+            'cloudcover_total' : ['min', 'mean', 'max', 'std'],
+            '10_metre_u_wind_component' : ['min', 'mean', 'max', 'std'],
+            '10_metre_v_wind_component' : ['min', 'mean', 'max', 'std'],
+            'direct_solar_radiation' : ['min', 'mean', 'max', 'std'],
+            'surface_solar_radiation_downwards' : ['min', 'mean', 'max', 'std'],
+            'snowfall' : ['min', 'mean', 'max', 'std'],
+            'total_precipitation' : ['min', 'mean', 'max', 'std'],
+}
+
 
 def load_enefit_training_data() -> pd.DataFrame:
     """
@@ -14,9 +29,17 @@ def load_enefit_training_data() -> pd.DataFrame:
     df_train = df_train.dropna(how='any') # what to do with nans?
     df_train.sort_values(by="datetime", inplace=True)
     extract_dt_attributes(df_train, col="datetime")
-    df_train = create_lagged_features(df=df_train, lag=2)
-
+    # daily + weekly lags
+    df_train = create_lagged_features(df=df_train, lag=1)
+    df_train = create_lagged_features(df=df_train, lag=7)
+    
     df_client = pd.read_csv(data_path /'client.csv')
+
+    location = pd.read_csv(data_path / "county_lon_lats.csv").drop(
+        columns = ["Unnamed: 0"]
+    )
+    for k in ['latitude', 'longitude'] :
+        location[k] = (10*location[k]).astype(int)
 
     df_electricity = pd.read_csv(data_path / 'electricity_prices.csv')
     df_electricity["forecast_date"] = pd.to_datetime(df_electricity["forecast_date"])
@@ -26,6 +49,16 @@ def load_enefit_training_data() -> pd.DataFrame:
     df_gas = pd.read_csv(data_path /'gas_prices.csv')
     df_gas["forecast_date"] = pd.to_datetime(df_gas["forecast_date"])
     df_gas["origin_date"] = pd.to_datetime(df_gas["origin_date"])
+
+    df_weather_fc = pd.read_csv(
+        data_path / 'forecast_weather.csv', 
+        parse_dates=['origin_datetime', 'forecast_datetime']
+    )
+    df_weather_fc['forecast_datetime'] = df_weather_fc['forecast_datetime'].dt.tz_convert(None)
+    df_weather_fc = get_county_loc(df_weather_fc, location)
+    df_weather_fc = df_weather_fc.groupby(['county', 'forecast_datetime']).agg(weather_agg).reset_index()
+    df_weather_fc.columns = ['_'.join([xx for xx in x if len(xx)>0]) for x in df_weather_fc.columns]
+    df_weather_fc.columns = [x + '_f' if x not in ['county', 'forecast_datetime'] else x for x in df_weather_fc.columns]
 
     # merge with client data
     df_train = pd.merge(
@@ -49,57 +82,14 @@ def load_enefit_training_data() -> pd.DataFrame:
         on = ['data_block_id'] 
     )
 
+    # merge with weather forecast data
+    df_train = df_train.merge(
+        df_weather_fc.rename(columns = {'forecast_datetime' : 'datetime'}),
+        how='left',
+        on=['county', 'datetime'],
+    )
+
     return df_train
-
-
-def prepare_enefit_test_data(
-        df: pd.DataFrame, 
-        revealed_targets: pd.DataFrame, 
-        df_client: pd.DataFrame, 
-        df_electricity: pd.DataFrame, 
-        df_gas: pd.DataFrame
-    )->pd.DataFrame:
-    """
-    Loads the enefit challenge testing dataset, extracts time series features 
-    from it and creates lags for the target variable
-    """
-    extract_dt_attributes(df)
-    evealed_targets = revealed_targets.rename(columns={'target':'target_2_days_ago'})
-    revealed_targets['datetime'] = pd.to_datetime(revealed_targets['datetime']) + pd.Timedelta(days=2)
-    df = pd.merge(
-        df,
-        revealed_targets[
-            ['county', 'is_business','is_consumption','product_type', 'datetime', 'target_2days_ago']
-        ],
-        how='left',
-        on=['county', 'is_business','is_consumption','product_type', 'datetime']
-    )
-    df_electricity['forecast_date'] = pd.to_datetime(df_electricity['forecast_date'])
-    df_electricity['time'] = df_electricity['forecast_date'].dt.strftime('%H:%M:%S')
-    df_electricity['date'] = (df_electricity['forecast_date'] + pd.Timedelta(days=1)).dt.date
-    df = pd.merge(
-        df, 
-        df_electricity[['time', 'date', 'euros_per_mwh']],
-        how = 'left',
-        on = ['time', 'date'] 
-    )
-    df_gas['date'] = (pd.to_datetime(df_gas['forecast_date']) + pd.Timedelta(days=1)).dt.date
-    df = pd.merge(
-        df, 
-        df_gas[['date', 'lowest_price_per_mwh', 'highest_price_per_mwh']],
-        how = 'left',
-        on = ['date'] 
-    )
-    df_client['date'] = (df_client['date'] + pd.Timedelta(days=2)).dt.date
-    df = pd.merge(
-        df, 
-        df_client,
-        how='left',
-        on = ['date', 'product_type', 'county', 'is_business'],
-    )
-
-    return df
-    
 
 def create_lagged_features(df: pd.DataFrame, lag: int) -> pd.DataFrame:
     """
@@ -134,7 +124,6 @@ def create_lagged_features(df: pd.DataFrame, lag: int) -> pd.DataFrame:
     # drop the redundant column
     df.drop(columns=['data_block_id_shifted'],inplace=True)
     return df
-
 
 def extract_dt_attributes(df: pd.DataFrame, col: str):
     """
@@ -183,3 +172,62 @@ def extract_dt_attributes(df: pd.DataFrame, col: str):
         # add sin and cos
         df[c+'_sine'] = np.sin(angles).astype('float')
         df[c+'_cosine'] = np.cos(angles).astype('float')
+
+def get_county_loc(h:pd.DataFrame, location: pd.DataFrame) -> pd.DataFrame:
+    """
+    Maps Latitude and Longitude of the h dataframe to the county code
+    """
+    h = h.drop_duplicates().reset_index(drop=True)
+    for k in ['latitude', 'longitude'] :
+        h[k] = (10*h[k]).astype(int)
+    h = pd.merge(h, location, how='left', on=['latitude', 'longitude'])
+    h['county'] = h['county'].fillna(-1).astype(int)
+    return h
+
+def prepare_enefit_test_data(
+        df: pd.DataFrame, 
+        revealed_targets: pd.DataFrame, 
+        df_client: pd.DataFrame, 
+        df_electricity: pd.DataFrame, 
+        df_gas: pd.DataFrame
+    )->pd.DataFrame:
+    """
+    Loads the enefit challenge testing dataset, extracts time series features 
+    from it and creates lags for the target variable
+    """
+    extract_dt_attributes(df)
+    evealed_targets = revealed_targets.rename(columns={'target':'target_2_days_ago'})
+    revealed_targets['datetime'] = pd.to_datetime(revealed_targets['datetime']) + pd.Timedelta(days=2)
+    df = pd.merge(
+        df,
+        revealed_targets[
+            ['county', 'is_business','is_consumption','product_type', 'datetime', 'target_2days_ago']
+        ],
+        how='left',
+        on=['county', 'is_business','is_consumption','product_type', 'datetime']
+    )
+    df_electricity['forecast_date'] = pd.to_datetime(df_electricity['forecast_date'])
+    df_electricity['time'] = df_electricity['forecast_date'].dt.strftime('%H:%M:%S')
+    df_electricity['date'] = (df_electricity['forecast_date'] + pd.Timedelta(days=1)).dt.date
+    df = pd.merge(
+        df, 
+        df_electricity[['time', 'date', 'euros_per_mwh']],
+        how = 'left',
+        on = ['time', 'date'] 
+    )
+    df_gas['date'] = (pd.to_datetime(df_gas['forecast_date']) + pd.Timedelta(days=1)).dt.date
+    df = pd.merge(
+        df, 
+        df_gas[['date', 'lowest_price_per_mwh', 'highest_price_per_mwh']],
+        how = 'left',
+        on = ['date'] 
+    )
+    df_client['date'] = (df_client['date'] + pd.Timedelta(days=2)).dt.date
+    df = pd.merge(
+        df, 
+        df_client,
+        how='left',
+        on = ['date', 'product_type', 'county', 'is_business'],
+    )
+
+    return df
