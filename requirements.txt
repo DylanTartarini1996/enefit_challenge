@@ -1,5 +1,6 @@
 catboost
 ipykernel
+geopy
 kaggle
 lightgbm
 matplotlib

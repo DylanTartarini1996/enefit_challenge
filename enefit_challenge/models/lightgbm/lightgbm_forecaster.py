@@ -14,7 +14,6 @@ import joblib
 
 from typing import Optional, Dict, Tuple, Literal
 from enefit_challenge.models.forecaster import Forecaster
-from enefit_challenge.utils.dataset import load_enefit_training_data
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -92,6 +91,7 @@ class LightGBMForecaster(Forecaster):
         y_test = y[test_index]
 
         # fit model on training data
+        mlflow.lightgbm.autolog(log_models=False, log_datasets=False)
         model = self.fit_model(
             X_train, 
             y_train, 
@@ -171,8 +171,8 @@ class LightGBMForecaster(Forecaster):
         @mlflc.track_in_mlflow() # decorator to allow mlflow logging
         def objective(trial):
             params = {
-                'n_estimators': trial.suggest_int('n_estimators', 50, 200, log=True),
-                'boosting_type': trial.suggest_categorical("boosting_type", ["gbdt", "dart", "rf"]),
+                'n_estimators': trial.suggest_int('n_estimators', 50, 250, log=True),
+                'boosting_type': trial.suggest_categorical("boosting_type", ["gbdt", "dart"]),
                 'learning_rate': trial.suggest_float('eta', 0.01, 0.95,log=True),
                 'max_depth': trial.suggest_int('max_depth', 1, 10, log=True),
                 'min_child_weight': trial.suggest_float('min_child_weight', 0.001, 10, log=True),

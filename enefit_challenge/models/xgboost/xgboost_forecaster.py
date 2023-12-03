@@ -93,6 +93,7 @@ class XGBoostForecaster(Forecaster):
         y_test = y[test_index]
 
         # fit model on training data
+        mlflow.xgboost.autolog(log_datasets=False, log_models=False)
         model = self.fit_model(
             X_train, 
             y_train, 
@@ -173,7 +174,7 @@ class XGBoostForecaster(Forecaster):
         def objective(trial):
             params = {
                 'eval_metric': 'mae',
-                'n_estimators': trial.suggest_int('n_estimators', 50, 200, log=True),
+                'n_estimators': trial.suggest_int('n_estimators', 50, 250, log=True),
                 'eta': trial.suggest_float('eta', 0.01, 0.95,log=True),
                 'max_depth': trial.suggest_int('max_depth', 1, 10, log=True),
                 'min_child_weight': trial.suggest_int('min_child_weight', 1, 25, log=True),
@@ -221,7 +222,7 @@ class XGBoostForecaster(Forecaster):
             study_name=experiment_name
         )
 
-        self.study.optimize(objective, n_trials=50, timeout= 7200, callbacks=[mlflc]) 
+        self.study.optimize(objective, n_trials=100, timeout= 7200, callbacks=[mlflc]) 
         
         # # search for the best run at the end of the experiment # not implemented now bc of callback bug
         # best_run = mlflow.search_runs(max_results=1,order_by=["metrics.MAE"]).run_id
@@ -293,3 +294,4 @@ class XGBoostForecaster(Forecaster):
             return ValueError(
                     "You must specify which kind of XGBoostForecaster you intend to use for prediction"
             )
+        

@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import mlflow
 import mlflow.catboost
+import mlflow.shap
 from catboost import CatBoostRegressor
 from mlflow.models import infer_signature
 from mlflow.tracking import MlflowClient
@@ -11,6 +12,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, mean_absolu
 import optuna
 from optuna.integration.mlflow import MLflowCallback
 import joblib
+import shap
 
 from typing import Optional, Dict, Tuple, Literal
 from enefit_challenge.models.forecaster import Forecaster
@@ -173,7 +175,7 @@ class CatBoostForecaster(Forecaster):
         @mlflc.track_in_mlflow() # decorator to allow mlflow logging
         def objective(trial):
             params = {
-                'eval_metric': 'mae',
+                'eval_metric': 'MAE',
                 'n_estimators': trial.suggest_int('n_estimators', 50, 200),
                 'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.95,log=True),
                 'depth': trial.suggest_int('depth', 3, 10, log=True),
@@ -220,7 +222,7 @@ class CatBoostForecaster(Forecaster):
             study_name=experiment_name
         )
 
-        self.study.optimize(objective, n_trials=50, timeout= 7200, callbacks=[mlflc]) 
+        self.study.optimize(objective, n_trials=100, timeout= 7200, callbacks=[mlflc]) 
         
         # search for the best run at the end of the experiment
         # best_run = mlflow.search_runs(max_results=1,order_by=["metrics.MAE"]).run_id
