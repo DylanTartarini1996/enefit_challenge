@@ -1,3 +1,4 @@
+import ast
 import numpy as np 
 import pandas as pd 
 import mlflow
@@ -28,8 +29,29 @@ class LightGBMForecaster(Forecaster):
         `optuna` for hyperparameters optimization and `mlflow` as backend to track experiments
         and register best-in-class model for time series prediction.
     """
-    def __init__(self)-> None:
+    def __init__(
+        self,
+        experiment_name: str="lightgbm",
+        artifact_path: str="lightgbm_model",
+        model_name: str="enefit_lightgbm"
+    )-> None:
+        """
+        Initializes the `LightGBMForecaster`
+        -------
+        params:
+        -------
+        `experiment_name`: `str`
+            the name the of the experiment under which mlflow's runs (or Optuna's trials) 
+            will be collected
+        `model_name`: `str`
+            the name the final model will have in the registry
+        `artifact_path`: `str`
+            the path pointing to the mlflow artifact
+        """
         self.tracking_uri = mlflow.set_tracking_uri(TRACKING_URI)
+        self.experiment_name = experiment_name
+        self.model_name = model_name
+        self.artifact_path = artifact_path
         pass
 
     def fit_model(
@@ -40,7 +62,6 @@ class LightGBMForecaster(Forecaster):
     ) -> LGBMRegressor:
         """
         Trains a `LGBMRegressor`
-
         -------     
         params:
         -------
@@ -73,8 +94,6 @@ class LightGBMForecaster(Forecaster):
         y: pd.Series, 
         year_month_train, 
         year_month_test,
-        experiment_name: str="lightgbm",
-        artifact_path: str="lightgbm_model",
         metrics: list=["mae"]
     ) -> float:
         """
@@ -115,37 +134,30 @@ class LightGBMForecaster(Forecaster):
 
         mlflow.lightgbm.log_model(
             model, 
-            artifact_path=artifact_path,
+            artifact_path=self.artifact_path,
             signature=self.signature
         )
         mlflow.log_params(params)
 
         return mae, mase, mse, rmse, mape
 
+
     def train_model(
         self, 
         train_df: pd.DataFrame, 
         target_col: str,
-        model_name: str,
         exclude_cols: list=[],
         categorical_features: list=[],
-        experiment_name: str="lightgbm",
-        artifact_path: str="lightgbm_model",
-        params: Optional[Dict]=None
+        params: Optional[Dict]=None,
+        n_trials: int=100
     ) -> None:
         """ 
         Takes an instance of `LGBMRegressor` model and tracks the hyperparameter tuning
         experiment on training set using `mlflow` and `optuna`.  
         Registers the best version of the model according to a specified metric (to be implemented).
-        
         -------     
         params:
         -------
-        `experiment_name`: `str`
-            the name of the experiment used to store runs in mlflow, 
-            as well as the name of the optuna study
-        `model_name`: `str`
-            the name the final model will have in the registry
         `train_df`: `pd.DataFrame`
             the training data for the model.
         `target_col`: `str`
@@ -154,15 +166,14 @@ class LightGBMForecaster(Forecaster):
             columns in dataset that should not be used
         `categorical_features`: `list`
             list of categorical features in the dataset
-        `artifact_path`: `str`
-            the path pointing to the mlflow artifact
         `params`: `Optional[Dict]`
             optional dictionary of parameters to use
+        `n_trials`: `int=100`
+            number of Optuna trials to conduct for hyperparameters tuning
         """
-        self.model_name = model_name
-
-        if len(categorical_features) > 0: 
-           train_df = pd.get_dummies(train_df, columns=categorical_features)
+        self.categorical_features = categorical_features
+        if len(self.categorical_features) > 0: 
+           train_df = pd.get_dummies(train_df, columns=self.categorical_features)
 
         X = train_df.drop([target_col] + exclude_cols, axis=1)
         y = train_df[target_col]
@@ -218,6 +229,13 @@ class LightGBMForecaster(Forecaster):
                     "MAPE":np.mean(cv_mape)
                 }
             )
+            mlflow.log_dict(
+                dictionary={
+                    "categorical_features": self.categorical_features
+                },
+                artifact_file="categorical_features.json"
+            )
+
             return np.mean(cv_mae) 
 
         
@@ -229,20 +247,18 @@ class LightGBMForecaster(Forecaster):
         self.study = optuna.create_study(
             directions=['minimize'],
             sampler=sampler,
-            study_name=experiment_name
+            study_name=self.experiment_name
         )
 
-        self.study.optimize(objective, n_trials=100, timeout= 7200, callbacks=[mlflc]) 
-        
-        # # search for the best run at the end of the experiment # not implemented now bc of callback bug
-        # best_run = mlflow.search_runs(max_results=1,order_by=["metrics.MAE"]).run_id
-        # # register new model version in mlflow
-        # self.result = mlflow.register_model(
-        #     model_uri=f"runs:/{best_run}/{artifact_path}",
-        #     name=self.model_name
-        # )
+        self.study.optimize(
+            objective, 
+            n_trials=n_trials, 
+            timeout= 7200, 
+            callbacks=[mlflc]
+        ) 
 
-    def forecast(
+
+    def predict(
         self, 
         input_data: pd.DataFrame,
         use_best_from_run: bool=True,
@@ -253,7 +269,7 @@ class LightGBMForecaster(Forecaster):
         Fetches a version of the model from the mlflow backend and uses it
         to perform prediction on new input data.  
         What version is used depends on params settings, 
-        defaults to using the best version from the last experiment run (currently not implemented). 
+        defaults to using the best version from the last experiment run. 
         -------     
         params:
         -------
@@ -270,37 +286,68 @@ class LightGBMForecaster(Forecaster):
             Said version must have been registered from a previous iteration,  
             either by the UI or with mlflow's API
         """
-        if use_best_from_run:
-            # not implemented now bc of callback bug
-            use_prod_model=None
-            use_version=None
-        
-            # model = mlflow.pyfunc.load_model(
-            #     model_uri=f"models:/{self.model_name}/{self.result.version}"
-            # )
-            # y_pred = model.predict(input_data)
-            # return y_pred
-        
-        if use_env_model is not None:
-            use_version = None
+        client = MlflowClient(tracking_uri=TRACKING_URI)
 
-            model = mlflow.pyfunc.load_model(
-                # get registered model in given environment
-                model_uri=f"models:/{self.model_name}/{use_env_model}"
+        if (use_best_from_run) & (use_env_model is None) & (use_version is None):
+            experiment = mlflow.search_experiments(
+                filter_string=f"name='{self.experiment_name}'"
             )
-            y_pred = model.predict(input_data)
-            return y_pred
-
-        if use_version is not None:
-            # get specific registered version of model
-            model = mlflow.pyfunc.load_model(
-                model_uri=f"models:/{self.model_name}/{use_version}"
+            experiment_id = experiment[0]._experiment_id
+            best_run = client.search_runs(
+                experiment_ids=[experiment_id],
+                filter_string="",
+                max_results=1,
+                order_by=["metrics.MAE ASC"], # best run according to MAE
+            )[0]
+            model = mlflow.lightgbm.load_model(
+                model_uri=f"runs:/{best_run.info.run_id}/{self.artifact_path}"
             )
-            y_pred = model.predict(input_data)
-            return y_pred
-
+            model_info = mlflow.models.get_model_info(
+                f"runs:/{best_run.info.run_id}/{self.artifact_path}"
+            )
         
+        elif (not use_best_from_run) & (use_env_model in ["Staging", "Production"]) & (use_version is None):
+            model_metadata = client.get_latest_versions(
+                name=self.model_name, 
+                stages=["Staging"]
+            )
+            run_id = model_metadata[0].run_id
+            model = mlflow.lightgbm.load_model(
+                model_uri=f"runs:/{run_id}/{self.artifact_path}"
+            )
+            model_info = mlflow.models.get_model_info(
+                f"runs:/{run_id}/{self.artifact_path}"
+            )
+
+        elif (not use_best_from_run) & (use_env_model is None) & (use_version is not None):
+            model = mlflow.lightgbm.load_model(
+                f"models:/{self.model_name}/{use_version}"
+            )
+            model_info = mlflow.models.get_model_info(
+                f"models:/{self.model_name}/{use_version}"
+            )
+            
         if (not use_best_from_run) & (use_env_model is None) & (use_version is None):
             return ValueError(
                     "You must specify which kind of LightGBMForecaster you intend to use for prediction"
             )
+        
+        inputs = ast.literal_eval(model_info.signature_dict["inputs"])
+        input_features = [d['name'] for d in inputs]
+        artifact_uri = mlflow.search_runs(
+            experiment_names=[self.experiment_name], 
+            filter_string=f"run_id='{model_info.run_id}'"
+        )["artifact_uri"][0]
+        # access categorical features used in the training iterations
+        categorical_features = mlflow.artifacts.load_dict(
+            artifact_uri=artifact_uri+"/categorical_features.json"
+        )["categorical_features"]
+        
+        if len(categorical_features) > 0: 
+           input_data = pd.get_dummies(input_data, columns=categorical_features)
+        
+        X = input_data[input_features]
+
+        y_pred = model.predict(X)
+        
+        return y_pred
