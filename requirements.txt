@@ -6,6 +6,7 @@ lightgbm
 matplotlib
 mlflow
 numpy
+optuna
 pandas
 pmdarima
 prophet

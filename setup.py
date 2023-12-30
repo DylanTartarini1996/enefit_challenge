@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="enefit_challenge", # Replace with your username
-    version="0.1.2",
+    version="0.2.0",
     author="Dylan Tartarini",
     author_email="<tartarinidylan@gmail.com>",
     description="<Package developed while partecipating to Enefit Challenge>",
@@ -18,6 +18,7 @@ setuptools.setup(
         "matplotlib",
         "mlflow",
         "numpy",
+        "optuna",
         "pandas",
         "pmdarima",
         "prophet",
