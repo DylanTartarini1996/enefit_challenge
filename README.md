@@ -31,8 +31,12 @@ To actually install the python package, you should be able to clone this reposit
 ```
 You should now be able to import modules and methods, for example
 ```
-    from enefit_challenge.utils.dataset import load_enefit_training_data
+    from enefit_challenge.dataset.dataset import EnefitDataset
 ```  
+or 
+```
+    from enefit_challenge.models.lightgbm.lightgbm_forecaster import LightGBMForecaster
+```
 
 If you want to ***modify the package***, add or remove code from it, cd into your folder and, 
 after removal from environment, run 
@@ -48,10 +52,21 @@ name of notebook: `{your_initials}_{number}_{notebook_title}.ipynb`
 Folder structure:
 ```
     .
-    ├── enefit -> to be downloaded from kaggle
+    ├── enefit -> to be downloaded from kaggle (git-ignored)
     ├── enefit_challenge -> python package for the challenge
-    ├── input -> data from the challenge
-    ├── notebooks -> notebook folder
+        ├── dataset
+        ├── models
+            ├── catboost
+            ├── lightgbm
+            ├── xgboost
+            ├── forecaster.py -> abstract class for the challenge
+        ├── tests
+    ├── input -> data from the challenge, download from kaggle (git-ignored)
+    ├── notebooks -> notebook folder for various phases of the project
+        ├── EDA
+        ├── feature_eng
+        ├── modelling
+        ├── prediction
     ├── .gitignore
     ├── README.md
     ├── requirements.txt
@@ -62,6 +77,12 @@ Folder structure:
 Once you launch an experiment (i.e. training a model) you can run 
 ```
     mlflow server
-```
-to visualize the mlflow UI and see all the experiment runs for all models, their metrics and so on.  
-You can also use the UI to register the best-performing models.
+```  
+
+to visualize the mlflow UI and to compare all the experiment runs for all models, their metrics and so on like in the example below   
+
+![](assets/lgbm_par_coordinates.png)
+
+You can also use the UI to register the best-performing models
+
+![](assets/model_registry.png)

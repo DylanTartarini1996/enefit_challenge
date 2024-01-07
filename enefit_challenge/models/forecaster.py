@@ -19,6 +19,6 @@ class Forecaster(ABC):
         pass
             
     @abstractmethod
-    def forecast(self):
+    def predict(self):
         pass
             
