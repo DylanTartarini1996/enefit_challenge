@@ -309,7 +309,7 @@ class CatBoostForecaster(Forecaster):
         elif (not use_best_from_run) & (use_env_model in ["Staging", "Production"]) & (use_version is None):
             model_metadata = client.get_latest_versions(
                 name=self.model_name, 
-                stages=["Staging"]
+                stages=[use_env_model]
             )
             run_id = model_metadata[0].run_id
             model = mlflow.catboost.load_model(
